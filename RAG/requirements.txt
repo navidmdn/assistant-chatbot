@@ -1,0 +1,4 @@
+faiss-cpu
+html2text
+playwright
+langchain
