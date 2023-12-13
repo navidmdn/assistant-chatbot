@@ -26,7 +26,7 @@ def index_and_store(
 
     # Load chunked documents into the FAISS index
     db = FAISS.from_documents(chunked_documents, HuggingFaceEmbeddings(model_name=embedding_hf_model))
-    db.save(output_index_file)
+    db.save_local(output_index_file)
 
 
 if __name__ == '__main__':
