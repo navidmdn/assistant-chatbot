@@ -2,6 +2,19 @@ import transformers
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 import fire
+import os
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from langchain.document_loaders import AsyncChromiumLoader
+from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+import nest_asyncio
+from langchain.chains import RetrievalQA
+
+from transformers import BitsAndBytesConfig
 
 
 def print_number_of_trainable_model_parameters(model):
@@ -30,7 +43,8 @@ def test_model(tokenizer, model):
     print(tokenizer.decode(outputs[0]))
 
 
-def run(model_name='gpt2', load_in_4bit=False, cache_dir=None):
+def run(model_name='gpt2', load_in_4bit=False, cache_dir=None, vector_store_path='vector_ds/test_wiki.faiss',
+        vector_store_embedding_model='sentence-transformers/all-mpnet-base-v2'):
 
     #################################################################
     # Tokenizer
@@ -88,7 +102,35 @@ def run(model_name='gpt2', load_in_4bit=False, cache_dir=None):
     )
 
     print_number_of_trainable_model_parameters(model)
-    test_model(tokenizer, model)
+    # test_model(tokenizer, model)
+
+    embedding_model = HuggingFaceEmbeddings(model_name=vector_store_embedding_model)
+    db = FAISS.load_local(vector_store_path, embedding_model)
+    retriever = db.as_retriever()
+
+    # Create prompt template
+    prompt_template = """
+    ### [INST] Instruction: Answer the question based on your general knowledge. Here is context to help:
+
+    {context}
+
+    ### QUESTION:
+    {question} [/INST]
+     """
+
+    # Create prompt from prompt template
+    prompt = PromptTemplate(
+        input_variables=["context", "question"],
+        template=prompt_template,
+    )
+
+    qa_chain = RetrievalQA.from_chain_type(
+        model,
+        retriever=retriever,
+        chain_type_kwargs={"prompt": prompt},
+    )
+
+    qa_chain({"question": "where is us located geographically?"})
 
 
 if __name__ == '__main__':
