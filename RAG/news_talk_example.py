@@ -9,11 +9,15 @@ from langchain.document_loaders import AsyncChromiumLoader
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores import FAISS
+from langchain.callbacks import StdOutCallbackHandler
 from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-import nest_asyncio
+from langchain.llms import HuggingFacePipeline
+from langchain.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 from langchain.chains import RetrievalQA
-
+from langchain_core.output_parsers import StrOutputParser
+from transformers import pipeline
+from operator import itemgetter
 from transformers import BitsAndBytesConfig
 
 
@@ -95,18 +99,21 @@ def run(model_name='gpt2', load_in_4bit=False, cache_dir=None, vector_store_path
     #################################################################
     # Load pre-trained config
     #################################################################
-    model = AutoModelForCausalLM.from_pretrained(
+    llm = AutoModelForCausalLM.from_pretrained(
         model_name,
         cache_dir=cache_dir,
         quantization_config=bnb_config,
     )
 
-    print_number_of_trainable_model_parameters(model)
+    print_number_of_trainable_model_parameters(llm)
     # test_model(tokenizer, model)
+
+    pipe = pipeline('text-generation', model=llm, tokenizer=tokenizer, max_length=1000)
+    local_llm = HuggingFacePipeline(pipeline=pipe)
 
     embedding_model = HuggingFaceEmbeddings(model_name=vector_store_embedding_model)
     db = FAISS.load_local(vector_store_path, embedding_model)
-    retriever = db.as_retriever()
+    retriever = db.as_retriever(search_kwargs={"k": 3})
 
     # Create prompt template
     prompt_template = """
@@ -118,19 +125,20 @@ def run(model_name='gpt2', load_in_4bit=False, cache_dir=None, vector_store_path
     {question} [/INST]
      """
 
-    # Create prompt from prompt template
-    prompt = PromptTemplate(
-        input_variables=["context", "question"],
-        template=prompt_template,
+    contex_combiner = lambda x: "\n".join([y.page_content for y in x])
+
+    prompt = PromptTemplate.from_template(prompt_template)
+    llm_chain = LLMChain(llm=local_llm, prompt=prompt, verbose=True)
+    chain = (
+        {"context": retriever | contex_combiner, "question": RunnablePassthrough()}
+        | llm_chain
+        # | StrOutputParser()
     )
 
-    qa_chain = RetrievalQA.from_chain_type(
-        model,
-        retriever=retriever,
-        chain_type_kwargs={"prompt": prompt},
-    )
-
-    qa_chain({"question": "where is us located geographically?"})
+    inp = ""
+    while inp != 'exit':
+        inp = input(">> ")
+        print(chain.invoke(inp))
 
 
 if __name__ == '__main__':
